@@ -1,0 +1,132 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "optparse"
+require "json"
+require_relative "../lib/changelog/parser"
+
+options = {
+  format: nil,
+  output: :json,
+  version: nil
+}
+
+parser = OptionParser.new do |opts|
+  opts.banner = "Usage: changelog-parser [options] [file]"
+  opts.separator ""
+  opts.separator "Parse changelog files and extract version information."
+  opts.separator ""
+  opts.separator "Options:"
+
+  opts.on("-f", "--format FORMAT", %i[keep_a_changelog markdown underline],
+          "Changelog format (keep_a_changelog, markdown, underline)") do |f|
+    options[:format] = f
+  end
+
+  opts.on("-v", "--version VERSION", "Show only a specific version") do |v|
+    options[:version] = v
+  end
+
+  opts.on("-l", "--list", "List versions only") do
+    options[:output] = :list
+  end
+
+  opts.on("-c", "--content", "Output content only (requires --version)") do
+    options[:output] = :content
+  end
+
+  opts.on("-p", "--pattern REGEX", "Custom version header regex pattern") do |p|
+    options[:pattern] = Regexp.new(p)
+  end
+
+  opts.on("-m", "--match-group N", Integer, "Regex capture group for version (default: 1)") do |n|
+    options[:match_group] = n
+  end
+
+  opts.on("--pretty", "Pretty print JSON output") do
+    options[:pretty] = true
+  end
+
+  opts.on_tail("-h", "--help", "Show this help message") do
+    puts opts
+    exit
+  end
+
+  opts.on_tail("--gem-version", "Show gem version") do
+    puts Changelog::Parser::VERSION
+    exit
+  end
+end
+
+begin
+  parser.parse!
+rescue OptionParser::InvalidArgument, OptionParser::InvalidOption => e
+  warn "Error: #{e.message}"
+  warn parser
+  exit 1
+end
+
+input = if ARGV.empty? || ARGV.first == "-"
+  $stdin.read
+else
+  file = ARGV.first
+  unless File.exist?(file)
+    warn "Error: File not found: #{file}"
+    exit 1
+  end
+  File.read(file)
+end
+
+if input.nil? || input.empty?
+  warn "Error: No input provided"
+  warn parser
+  exit 1
+end
+
+parsed = Changelog::Parser.new(
+  input,
+  format: options[:format],
+  version_pattern: options[:pattern],
+  match_group: options[:match_group] || 1
+)
+
+result = parsed.parse
+
+case options[:output]
+when :list
+  puts result.keys.join("\n")
+when :content
+  unless options[:version]
+    warn "Error: --content requires --version"
+    exit 1
+  end
+  entry = result[options[:version]]
+  if entry
+    puts entry[:content]
+  else
+    warn "Version not found: #{options[:version]}"
+    exit 1
+  end
+when :json
+  output = if options[:version]
+    entry = result[options[:version]]
+    unless entry
+      warn "Version not found: #{options[:version]}"
+      exit 1
+    end
+    { options[:version] => entry }
+  else
+    result
+  end
+
+  # Convert dates to strings for JSON
+  json_output = output.transform_values do |entry|
+    entry.transform_values { |v| v.is_a?(Date) ? v.to_s : v }
+  end
+
+  if options[:pretty]
+    puts JSON.pretty_generate(json_output)
+  else
+    puts JSON.generate(json_output)
+  end
+end
