@@ -1,5 +1,7 @@
 # Changelog::Parser
 
+[![Gem Version](https://badge.fury.io/rb/changelog-parser.svg)](https://rubygems.org/gems/changelog-parser)
+
 A Ruby gem for parsing changelog files into structured data. Supports the Keep a Changelog format, markdown headers, and custom patterns. Zero runtime dependencies.
 
 Inspired by [vandamme](https://github.com/tech-angels/vandamme).
