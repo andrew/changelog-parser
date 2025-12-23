@@ -10,7 +10,7 @@ Gem::Specification.new do |spec|
 
   spec.summary = "Parse changelog files into structured data"
   spec.description = "A Ruby gem for parsing changelog files. Supports Keep a Changelog format, " \
-                     "markdown headers, and custom patterns. Zero runtime dependencies."
+                     "markdown headers, and custom patterns."
   spec.homepage = "https://github.com/andrew/changelog-parser"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.2.0"

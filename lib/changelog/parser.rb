@@ -22,6 +22,17 @@ module Changelog
       underline: UNDERLINE_HEADER
     }.freeze
 
+    # Common changelog filenames in priority order (from Dependabot)
+    CHANGELOG_FILENAMES = %w[
+      changelog
+      news
+      changes
+      history
+      release
+      whatsnew
+      releases
+    ].freeze
+
     attr_reader :changelog, :version_pattern, :match_group
 
     def initialize(changelog, format: nil, version_pattern: nil, match_group: 1)
@@ -91,6 +102,46 @@ module Changelog
       end
     end
 
+    def between(old_version, new_version)
+      old_line = line_for_version(old_version)
+      new_line = line_for_version(new_version)
+      lines = changelog.split("\n")
+
+      range = if old_line && new_line
+        old_line < new_line ? (old_line..-1) : (new_line..old_line - 1)
+      elsif old_line
+        old_line.zero? ? nil : (0..old_line - 1)
+      elsif new_line
+        (new_line..-1)
+      end
+
+      return nil unless range
+
+      lines[range]&.join("\n")&.rstrip
+    end
+
+    def line_for_version(version)
+      return nil unless version
+
+      version = version.to_s.gsub(/^v/i, "")
+      escaped = Regexp.escape(version)
+      lines = changelog.split("\n")
+
+      lines.find_index.with_index do |line, index|
+        next false unless line.match?(/(?<!\.)#{escaped}(?![.\-\w])/)
+        next false if line.match?(/#{escaped}\.\./)
+
+        next true if line.start_with?("#", "!", "==")
+        next true if line.match?(/^v?#{escaped}:?\s/)
+        next true if line.match?(/^\[#{escaped}\]/)
+        next true if line.match?(/^[\+\*\-]\s+(version\s+)?#{escaped}/i)
+        next true if line.match?(/^\d{4}-\d{2}-\d{2}/)
+        next true if lines[index + 1]&.match?(/^[=\-\+]{3,}\s*$/)
+
+        false
+      end
+    end
+
     def self.parse(changelog, **options)
       new(changelog, **options).parse
     end
@@ -98,6 +149,35 @@ module Changelog
     def self.parse_file(path, **options)
       content = File.read(path)
       new(content, **options).parse
+    end
+
+    def self.find_changelog(directory = ".")
+      files = Dir.entries(directory).select { |f| File.file?(File.join(directory, f)) }
+
+      CHANGELOG_FILENAMES.each do |name|
+        pattern = /\A#{name}(\.(md|txt|rst|rdoc|markdown))?\z/i
+        candidates = files.select { |f| f.match?(pattern) }
+        candidates = candidates.reject { |f| f.end_with?(".sh") }
+
+        return File.join(directory, candidates.first) if candidates.one?
+
+        candidates.each do |candidate|
+          path = File.join(directory, candidate)
+          size = File.size(path)
+          next if size > 1_000_000 || size < 100
+
+          return path
+        end
+      end
+
+      nil
+    end
+
+    def self.find_and_parse(directory = ".", **options)
+      path = find_changelog(directory)
+      return nil unless path
+
+      parse_file(path, **options)
     end
 
     def resolve_pattern(format, custom_pattern)

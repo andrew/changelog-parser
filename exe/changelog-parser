@@ -5,34 +5,61 @@ require "optparse"
 require "json"
 require_relative "../lib/changelog/parser"
 
-options = {
-  format: nil,
-  output: :json,
-  version: nil
-}
+def load_changelog(path, options)
+  if path.nil? || path == "-"
+    $stdin.read
+  elsif File.directory?(path)
+    changelog_path = Changelog::Parser.find_changelog(path)
+    unless changelog_path
+      warn "Error: No changelog found in directory: #{path}"
+      exit 1
+    end
+    File.read(changelog_path)
+  elsif File.exist?(path)
+    File.read(path)
+  else
+    warn "Error: File or directory not found: #{path}"
+    exit 1
+  end
+end
 
-parser = OptionParser.new do |opts|
-  opts.banner = "Usage: changelog-parser [options] [file]"
+def build_parser(content, options)
+  Changelog::Parser.new(
+    content,
+    format: options[:format],
+    version_pattern: options[:pattern],
+    match_group: options[:match_group] || 1
+  )
+end
+
+def output_json(data, pretty: false)
+  json_data = data.transform_values do |entry|
+    entry.transform_values { |v| v.is_a?(Date) ? v.to_s : v }
+  end
+
+  if pretty
+    puts JSON.pretty_generate(json_data)
+  else
+    puts JSON.generate(json_data)
+  end
+end
+
+options = {}
+global_opts = OptionParser.new do |opts|
+  opts.banner = "Usage: changelog-parser <command> [options] [file_or_directory]"
   opts.separator ""
-  opts.separator "Parse changelog files and extract version information."
+  opts.separator "Commands:"
+  opts.separator "  parse    Parse changelog and output JSON (default)"
+  opts.separator "  list     List version numbers only"
+  opts.separator "  show     Show content for a specific version"
+  opts.separator "  between  Show content between two versions"
+  opts.separator "  validate Validate changelog against Keep a Changelog format"
   opts.separator ""
   opts.separator "Options:"
 
   opts.on("-f", "--format FORMAT", %i[keep_a_changelog markdown underline],
           "Changelog format (keep_a_changelog, markdown, underline)") do |f|
     options[:format] = f
-  end
-
-  opts.on("-v", "--version VERSION", "Show only a specific version") do |v|
-    options[:version] = v
-  end
-
-  opts.on("-l", "--list", "List versions only") do
-    options[:output] = :list
-  end
-
-  opts.on("-c", "--content", "Output content only (requires --version)") do
-    options[:output] = :content
   end
 
   opts.on("-p", "--pattern REGEX", "Custom version header regex pattern") do |p|
@@ -47,86 +74,161 @@ parser = OptionParser.new do |opts|
     options[:pretty] = true
   end
 
-  opts.on_tail("-h", "--help", "Show this help message") do
+  opts.on("-h", "--help", "Show this help message") do
     puts opts
+    puts ""
+    puts "Examples:"
+    puts "  changelog-parser parse CHANGELOG.md"
+    puts "  changelog-parser list ."
+    puts "  changelog-parser show 1.0.0 CHANGELOG.md"
+    puts "  changelog-parser between 1.0.0 2.0.0 CHANGELOG.md"
+    puts "  cat CHANGELOG.md | changelog-parser parse -"
     exit
   end
 
-  opts.on_tail("--gem-version", "Show gem version") do
+  opts.on("--version", "Show gem version") do
     puts Changelog::Parser::VERSION
     exit
   end
 end
 
 begin
-  parser.parse!
-rescue OptionParser::InvalidArgument, OptionParser::InvalidOption => e
+  global_opts.parse!
+rescue OptionParser::InvalidOption => e
   warn "Error: #{e.message}"
-  warn parser
+  warn global_opts
   exit 1
 end
 
-input = if ARGV.empty? || ARGV.first == "-"
-  $stdin.read
-else
-  file = ARGV.first
-  unless File.exist?(file)
-    warn "Error: File not found: #{file}"
+command = ARGV.shift || "parse"
+
+case command
+when "parse"
+  path = ARGV.shift
+  content = load_changelog(path, options)
+  parser = build_parser(content, options)
+  output_json(parser.parse, pretty: options[:pretty])
+
+when "list"
+  path = ARGV.shift
+  content = load_changelog(path, options)
+  parser = build_parser(content, options)
+  puts parser.versions.join("\n")
+
+when "show"
+  version = ARGV.shift
+  path = ARGV.shift
+
+  # Check if version looks like a file path (missing version argument)
+  if version && File.exist?(version) && !path
+    warn "Error: show requires a version argument"
+    warn "Usage: changelog-parser show <version> [file_or_directory]"
     exit 1
   end
-  File.read(file)
-end
 
-if input.nil? || input.empty?
-  warn "Error: No input provided"
-  warn parser
-  exit 1
-end
-
-parsed = Changelog::Parser.new(
-  input,
-  format: options[:format],
-  version_pattern: options[:pattern],
-  match_group: options[:match_group] || 1
-)
-
-result = parsed.parse
-
-case options[:output]
-when :list
-  puts result.keys.join("\n")
-when :content
-  unless options[:version]
-    warn "Error: --content requires --version"
+  unless version
+    warn "Error: show requires a version argument"
+    warn "Usage: changelog-parser show <version> [file_or_directory]"
     exit 1
   end
-  entry = result[options[:version]]
-  if entry
-    puts entry[:content]
+
+  content = load_changelog(path, options)
+  parser = build_parser(content, options)
+  entry = parser[version]
+
+  unless entry
+    warn "Error: Version not found: #{version}"
+    exit 1
+  end
+
+  puts entry[:content]
+
+when "between"
+  old_version = ARGV.shift
+  new_version = ARGV.shift
+  path = ARGV.shift
+
+  # Check if new_version looks like a file path (missing second version)
+  if new_version && File.exist?(new_version) && !path
+    warn "Error: between requires two version arguments"
+    warn "Usage: changelog-parser between <old_version> <new_version> [file_or_directory]"
+    exit 1
+  end
+
+  unless old_version && new_version
+    warn "Error: between requires two version arguments"
+    warn "Usage: changelog-parser between <old_version> <new_version> [file_or_directory]"
+    exit 1
+  end
+
+  content = load_changelog(path, options)
+  parser = build_parser(content, options)
+  result = parser.between(old_version, new_version)
+
+  if result
+    puts result
   else
-    warn "Version not found: #{options[:version]}"
+    warn "Error: Could not find versions in changelog"
     exit 1
   end
-when :json
-  output = if options[:version]
-    entry = result[options[:version]]
-    unless entry
-      warn "Version not found: #{options[:version]}"
-      exit 1
+
+when "validate"
+  path = ARGV.shift
+  content = load_changelog(path, options)
+  parser = build_parser(content, options)
+  result = parser.parse
+  errors = []
+  warnings = []
+
+  # Check if any versions were found
+  if result.empty?
+    errors << "No versions found in changelog"
+  end
+
+  # Check for Unreleased section
+  unless result.key?("Unreleased")
+    warnings << "No [Unreleased] section found"
+  end
+
+  # Check for empty versions (Unreleased can be empty)
+  result.each do |version, entry|
+    next if version == "Unreleased"
+    if entry[:content].nil? || entry[:content].strip.empty?
+      warnings << "Version #{version} has no content"
     end
-    { options[:version] => entry }
-  else
-    result
   end
 
-  # Convert dates to strings for JSON
-  json_output = output.transform_values do |entry|
-    entry.transform_values { |v| v.is_a?(Date) ? v.to_s : v }
+  # Check date ordering (should be descending)
+  dated_versions = result.reject { |_, e| e[:date].nil? }
+  dates = dated_versions.values.map { |e| e[:date] }
+  unless dates == dates.sort.reverse
+    warnings << "Dates are not in descending order"
   end
 
-  if options[:pretty]
-    puts JSON.pretty_generate(json_output)
-  else
-    puts JSON.generate(json_output)
+  # Check for missing dates
+  result.each do |version, entry|
+    next if version == "Unreleased"
+    if entry[:date].nil?
+      warnings << "Version #{version} has no date"
+    end
   end
+
+  # Output results
+  if errors.empty? && warnings.empty?
+    puts "Valid changelog with #{result.size} version(s)"
+    exit 0
+  end
+
+  errors.each { |e| warn "Error: #{e}" }
+  warnings.each { |w| warn "Warning: #{w}" }
+
+  exit 1 if errors.any?
+  exit 0
+
+else
+  # Treat unknown command as a path (backwards compatibility)
+  path = command
+  content = load_changelog(path, options)
+  parser = build_parser(content, options)
+  output_json(parser.parse, pretty: options[:pretty])
 end

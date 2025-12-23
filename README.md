@@ -2,7 +2,7 @@
 
 [![Gem Version](https://badge.fury.io/rb/changelog-parser.svg)](https://rubygems.org/gems/changelog-parser)
 
-A Ruby gem for parsing changelog files into structured data. Supports the Keep a Changelog format, markdown headers, and custom patterns. Zero runtime dependencies.
+A Ruby gem for parsing changelog files into structured data. Supports the Keep a Changelog format, markdown headers, and custom patterns.
 
 Inspired by [vandamme](https://github.com/tech-angels/vandamme).
 
@@ -96,6 +96,35 @@ Changelog::Parser.new(content, format: :markdown)
 Changelog::Parser.new(content, format: :underline)
 ```
 
+### Extracting content between versions
+
+Extract changelog content between two versions (like Dependabot does for PR descriptions):
+
+```ruby
+parser = Changelog::Parser.new(changelog)
+
+# Get content between old and new version
+parser.between("1.0.0", "2.0.0")
+
+# Get content from a version to the end
+parser.between(nil, "1.5.0")
+
+# Get content from start to a version
+parser.between("1.5.0", nil)
+```
+
+### Finding changelog files
+
+Automatically find and parse changelog files in a directory:
+
+```ruby
+# Find changelog file (searches for CHANGELOG.md, NEWS, HISTORY, etc.)
+path = Changelog::Parser.find_changelog("/path/to/project")
+
+# Find and parse in one step
+result = Changelog::Parser.find_and_parse("/path/to/project")
+```
+
 ### Custom patterns
 
 For changelogs with non-standard formats, provide a custom regex:
@@ -114,42 +143,52 @@ The gem includes a command-line interface:
 
 ```bash
 # Parse a changelog and output JSON
-changelog-parser CHANGELOG.md
+changelog-parser parse CHANGELOG.md
 
-# Pretty print JSON
-changelog-parser --pretty CHANGELOG.md
+# Parse from a directory (auto-finds CHANGELOG.md, NEWS, HISTORY, etc.)
+changelog-parser parse /path/to/project
 
 # List versions only
-changelog-parser --list CHANGELOG.md
+changelog-parser list CHANGELOG.md
 
-# Get a specific version
-changelog-parser --version 1.0.0 CHANGELOG.md
+# Show content for a specific version
+changelog-parser show 1.0.0 CHANGELOG.md
 
-# Get content only for a version
-changelog-parser --version 1.0.0 --content CHANGELOG.md
+# Show content between two versions (for PR descriptions)
+changelog-parser between 1.0.0 2.0.0 CHANGELOG.md
 
-# Specify format
-changelog-parser --format keep_a_changelog CHANGELOG.md
+# Validate against Keep a Changelog format
+changelog-parser validate CHANGELOG.md
+
+# Pretty print JSON
+changelog-parser parse --pretty CHANGELOG.md
 
 # Read from stdin
-cat CHANGELOG.md | changelog-parser -
+cat CHANGELOG.md | changelog-parser parse -
 
 # Custom regex pattern
-changelog-parser --pattern "^## v([\d.]+)" CHANGELOG.md
+changelog-parser parse --pattern "^## v([\d.]+)" CHANGELOG.md
 ```
 
-### CLI options
+### Commands
+
+```
+parse    Parse changelog and output JSON (default)
+list     List version numbers only
+show     Show content for a specific version
+between  Show content between two versions
+validate Validate changelog against Keep a Changelog format
+```
+
+### Options
 
 ```
 -f, --format FORMAT      Changelog format (keep_a_changelog, markdown, underline)
--v, --version VERSION    Show only a specific version
--l, --list               List versions only
--c, --content            Output content only (requires --version)
 -p, --pattern REGEX      Custom version header regex pattern
 -m, --match-group N      Regex capture group for version (default: 1)
     --pretty             Pretty print JSON output
 -h, --help               Show help message
-    --gem-version        Show gem version
+    --version            Show gem version
 ```
 
 ## Supported formats

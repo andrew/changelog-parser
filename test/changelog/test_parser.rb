@@ -248,6 +248,160 @@ class TestFormatDetection < Minitest::Test
   end
 end
 
+class TestLineForVersion < Minitest::Test
+  def test_finds_keep_a_changelog_version
+    changelog = "## [1.0.0] - 2024-01-01\n\nContent"
+    parser = Changelog::Parser.new(changelog)
+
+    assert_equal 0, parser.line_for_version("1.0.0")
+  end
+
+  def test_finds_version_with_v_prefix
+    changelog = "## v1.0.0\n\nContent"
+    parser = Changelog::Parser.new(changelog)
+
+    assert_equal 0, parser.line_for_version("v1.0.0")
+    assert_equal 0, parser.line_for_version("1.0.0")
+  end
+
+  def test_avoids_version_substring_match
+    changelog = <<~CHANGELOG
+      ## [1.0.10] - 2024-02-01
+
+      Content for 1.0.10
+
+      ## [1.0.1] - 2024-01-01
+
+      Content for 1.0.1
+    CHANGELOG
+
+    parser = Changelog::Parser.new(changelog)
+    assert_equal 0, parser.line_for_version("1.0.10")
+    assert_equal 4, parser.line_for_version("1.0.1")
+  end
+
+  def test_avoids_version_range_match
+    changelog = "Supports versions 1.0.0..2.0.0\n\n## [1.0.0]\n\nContent"
+    parser = Changelog::Parser.new(changelog)
+
+    assert_equal 2, parser.line_for_version("1.0.0")
+  end
+
+  def test_finds_underlined_version
+    changelog = "1.0.0\n=====\n\nContent"
+    parser = Changelog::Parser.new(changelog)
+
+    assert_equal 0, parser.line_for_version("1.0.0")
+  end
+
+  def test_finds_bullet_point_version
+    changelog = "- version 1.0.0\n\nContent"
+    parser = Changelog::Parser.new(changelog)
+
+    assert_equal 0, parser.line_for_version("1.0.0")
+  end
+
+  def test_finds_colon_version
+    changelog = "1.0.0: Initial release\n\nContent"
+    parser = Changelog::Parser.new(changelog)
+
+    assert_equal 0, parser.line_for_version("1.0.0")
+  end
+
+  def test_returns_nil_for_missing_version
+    changelog = "## [1.0.0] - 2024-01-01\n\nContent"
+    parser = Changelog::Parser.new(changelog)
+
+    assert_nil parser.line_for_version("2.0.0")
+  end
+end
+
+class TestBetween < Minitest::Test
+  def setup
+    @changelog = <<~CHANGELOG
+      ## [3.0.0] - 2024-03-01
+
+      Version 3 content
+
+      ## [2.0.0] - 2024-02-01
+
+      Version 2 content
+
+      ## [1.0.0] - 2024-01-01
+
+      Version 1 content
+    CHANGELOG
+    @parser = Changelog::Parser.new(@changelog)
+  end
+
+  def test_extracts_content_between_versions
+    result = @parser.between("1.0.0", "3.0.0")
+
+    assert_includes result, "Version 3 content"
+    assert_includes result, "Version 2 content"
+    refute_includes result, "Version 1 content"
+  end
+
+  def test_extracts_from_new_version_to_end
+    result = @parser.between(nil, "2.0.0")
+
+    assert_includes result, "Version 2 content"
+    assert_includes result, "Version 1 content"
+  end
+
+  def test_extracts_from_start_to_old_version
+    result = @parser.between("2.0.0", nil)
+
+    assert_includes result, "Version 3 content"
+    refute_includes result, "Version 2 content"
+  end
+
+  def test_returns_nil_when_neither_found
+    result = @parser.between("9.0.0", "8.0.0")
+
+    assert_nil result
+  end
+
+  def test_handles_ascending_changelog
+    changelog = <<~CHANGELOG
+      ## [1.0.0] - 2024-01-01
+
+      First
+
+      ## [2.0.0] - 2024-02-01
+
+      Second
+    CHANGELOG
+
+    parser = Changelog::Parser.new(changelog)
+    result = parser.between("1.0.0", "2.0.0")
+
+    assert_includes result, "Second"
+  end
+end
+
+class TestFindChangelog < Minitest::Test
+  def test_finds_changelog_in_current_directory
+    path = Changelog::Parser.find_changelog
+
+    assert_equal "./CHANGELOG.md", path
+  end
+
+  def test_returns_nil_for_empty_directory
+    Dir.mktmpdir do |dir|
+      result = Changelog::Parser.find_changelog(dir)
+      assert_nil result
+    end
+  end
+
+  def test_finds_and_parses
+    result = Changelog::Parser.find_and_parse
+
+    assert_instance_of Hash, result
+    assert_includes result.keys, "0.1.0"
+  end
+end
+
 class TestEdgeCases < Minitest::Test
   def test_version_with_prerelease
     changelog = "## [1.0.0-beta.1] - 2024-01-01\n\nBeta content"
